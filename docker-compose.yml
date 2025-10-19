@@ -21,7 +21,7 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - bot_network
+      - fsoul_bot_bot_network
     healthcheck:
       test: ["CMD-SHELL", "ps aux | grep -v grep | grep main.py || exit 1"]
       interval: 5m
@@ -29,6 +29,6 @@ services:
       retries: 3
 
 networks:
-  bot_network:
+  fsoul_bot_bot_network:
     driver: bridge
     external: true
