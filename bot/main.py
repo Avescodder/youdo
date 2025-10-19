@@ -34,7 +34,7 @@ http_client = None
 
 if proxy_url:
     print(f"🔐 Using proxy for OpenAI: {proxy_url}")
-    http_client = httpx.AsyncClient(
+    http_client = httpx.Client(
         proxy=proxy_url,
         timeout=30.0
     )
