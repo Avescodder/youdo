@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  youdo-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: youdo-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Lisbon
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./logs:/app/logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep main.py || exit 1"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
