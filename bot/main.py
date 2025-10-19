@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import os
 from bs4 import BeautifulSoup
 import dotenv
+import httpx
 
 dotenv.load_dotenv()
 
@@ -23,12 +24,26 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
+proxy_url = os.getenv('SHADOWSOCKS_PROXY')
+
 CHECK_INTERVAL = 10 
 
 PROCESS_LAST_MINUTES = 10  
 
+http_client = None
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+if proxy_url:
+    print(f"🔐 Using proxy for OpenAI: {proxy_url}")
+    http_client = httpx.AsyncClient(
+        proxy=proxy_url,
+        timeout=30.0
+    )
+
+client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    http_client=http_client
+)
+
 processed_emails = set() 
 
 def connect_to_gmail():
@@ -154,7 +169,8 @@ def generate_response(task_info):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
-            max_tokens=200
+            max_tokens=200,
+            timeout=30  
         )
         
         generated_text = response.choices[0].message.content.strip()

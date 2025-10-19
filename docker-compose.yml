@@ -12,6 +12,7 @@ services:
     environment:
       - TZ=Europe/Lisbon
       - PYTHONUNBUFFERED=1
+      - SHADOWSOCKS_PROXY=socks5://shadowsocks-client:1080
     volumes:
       - ./logs:/app/logs
     logging:
@@ -19,9 +20,15 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - bot_network
     healthcheck:
       test: ["CMD-SHELL", "ps aux | grep -v grep | grep main.py || exit 1"]
       interval: 5m
       timeout: 10s
       retries: 3
-      start_period: 30s
+
+networks:
+  bot_network:
+    driver: bridge
+    external: true
