@@ -312,10 +312,10 @@ def check_new_emails():
                 
                 print(f"💰 Бюджет: {task_info['budget']} ₽")
                 
-                response_text, offer_price = generate_response(task_info)
+                response_text = generate_response(task_info)
                 
                 if response_text:
-                    asyncio.run(send_to_telegram(task_info, response_text, offer_price))
+                    asyncio.run(send_to_telegram(task_info, response_text))
                     new_count += 1
                 else:
                     print("❌ Не удалось сгенерировать отклик")
