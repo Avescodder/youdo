@@ -28,7 +28,7 @@ proxy_url = os.getenv('SHADOWSOCKS_PROXY')
 
 CHECK_INTERVAL = 10 
 
-PROCESS_LAST_MINUTES = 10  
+PROCESS_LAST_MINUTES = 10
 
 http_client = None
 
@@ -57,48 +57,111 @@ def connect_to_gmail():
         return None
 
 def parse_email_body(msg):
-    """Извлечение текста из письма"""
+    """Извлечение текста из письма - специализировано для YouDo"""
     body = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
-            
-            if content_type == "text/plain" and "attachment" not in content_disposition:
-                try:
-                    body = part.get_payload(decode=True).decode()
-                except:
-                    pass
-            elif content_type == "text/html" and not body:
-                try:
-                    html = part.get_payload(decode=True).decode()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    body = soup.get_text()
-                except:
-                    pass
-    else:
-        try:
-            body = msg.get_payload(decode=True).decode()
-        except:
-            pass
     
-    return body
+    try:
+        if msg.is_multipart():
+            for part in msg.walk():
+                content_type = part.get_content_type()
+                content_disposition = str(part.get("Content-Disposition", ""))
+                
+                if "attachment" in content_disposition:
+                    continue
+                
+                if content_type == "text/plain":
+                    try:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
+                                try:
+                                    body = payload.decode(encoding)
+                                    if body.strip() and len(body) > 20:
+                                        return body.strip()
+                                except:
+                                    continue
+                    except Exception as e:
+                        pass
+                
+                if content_type == "text/html":
+                    try:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
+                                try:
+                                    html = payload.decode(encoding)
+                                    soup = BeautifulSoup(html, 'html.parser')
+                                    
+                                    for tag in soup(['script', 'style', 'meta', 'link', 'noscript']):
+                                        tag.decompose()
+                                    
+                                    text = soup.get_text(separator='\n', strip=True)
+                                    
+                                    text = ''.join(c for c in text if not ((0x200b <= ord(c) <= 0x200f) or (0x2060 <= ord(c) <= 0x2064) or ord(c) == 0xfeff or ord(c) == 0xad))
+                                    
+                                    lines = [line.strip() for line in text.split('\n') if line.strip() and len(line.strip()) > 1]
+                                    cleaned_text = '\n'.join(lines)
+                                    
+                                    if cleaned_text:
+                                        body = cleaned_text
+                                        break
+                                except:
+                                    continue
+                        
+                        if body:
+                            return body.strip()
+                    except Exception as e:
+                        pass
+        else:
+            try:
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    for encoding in ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']:
+                        try:
+                            body = payload.decode(encoding)
+                            if body.strip() and len(body) > 20:
+                                return body.strip()
+                        except:
+                            continue
+            except Exception as e:
+                pass
+        
+        if body:
+            return body.strip()
+        else:
+            print(f"⚠️  Текст не найден! Структура: {[part.get_content_type() for part in msg.walk()]}")
+            return ""
+        
+    except Exception as e:
+        print(f"❌ Ошибка в parse_email_body: {e}")
+        return ""
 
 def extract_task_info(email_body, subject):
     """Извлечение информации о задании из письма"""
+    
+    clean_text = lambda t: ''.join(c for c in t if not ((0x200b <= ord(c) <= 0x200f) or (0x2060 <= ord(c) <= 0x2064) or ord(c) == 0xfeff or ord(c) == 0xad))
+    
+    email_body = clean_text(email_body)
+    subject = clean_text(subject)
     
     title = subject
     title = re.sub(r'до\s*\d+[\d\s]*₽', '', title).strip()
     
     description = ""
     lines = email_body.split('\n')
+    
+    skip_keywords = ['YouDo', 'Откликнуться', 'новое задание', 'подборка', 'рекомендуем', 'письма', 'gmail']
+    
     for line in lines:
-        line = line.strip()
-        if line and 'YouDo' not in line and 'Откликнуться' not in line and 'новое задание' not in line.lower():
-            if len(line) > 20:
-                description += line + " "
-                if len(description) > 500:
-                    break
+        line_stripped = line.strip()
+        
+        if not line_stripped:
+            continue
+        
+        if any(keyword.lower() in line.lower() for keyword in skip_keywords):
+            continue
+        
+        description += line_stripped + " "
     
     budget_match = re.search(r'до\s*(\d[\d\s]*)\s*₽', subject)
     if not budget_match:
@@ -106,11 +169,15 @@ def extract_task_info(email_body, subject):
     
     budget = int(budget_match.group(1).replace(' ', '')) if budget_match else None
     
+    description = ' '.join(description.split())
+    
+    description_for_log = ''.join(c for c in description if ord(c) >= 32 or c in '\n\t\r')
+    
     return {
         'title': title.strip(),
-        'description': description.strip()[:500],
+        'description': description.strip(),
         'budget': budget,
-        'full_text': email_body[:1000] 
+        'full_text': email_body
     }
 
 
@@ -227,7 +294,6 @@ async def send_to_telegram(task_info, response_text):
             parse_mode='HTML'
         )
         
-        print(f"✅ Отправлено: {task_info['title'][:50]}")
         
     except Exception as e:
         print(f"❌ Ошибка Telegram: {e}")
@@ -262,12 +328,9 @@ def check_new_emails():
         email_ids = messages[0].split()
         
         if not email_ids:
-            print(f"⏳ [{datetime.now().strftime('%H:%M:%S')}] Новых писем нет")
             return
         
         time_threshold = datetime.now() - timedelta(minutes=PROCESS_LAST_MINUTES)
-        
-        print(f"\n📧 Найдено непрочитанных: {len(email_ids)}")
         new_count = 0
         
         for email_id in email_ids:
@@ -286,7 +349,6 @@ def check_new_emails():
                 
                 email_date = get_email_date(msg)
                 if email_date < time_threshold:
-                    print(f"⏭️  Пропуск старого письма от {email_date.strftime('%H:%M:%S')}")
                     processed_emails.add(email_uid)
                     continue
                 
@@ -295,22 +357,18 @@ def check_new_emails():
                     subject = subject.decode()
                 
                 if 'подборка' in subject.lower() or 'рекомендуем' in subject.lower():
-                    print(f"⏭️  Пропуск подборки")
                     processed_emails.add(email_uid)
                     continue
                 
-                print(f"\n📨 {subject}")
                 
                 email_body = parse_email_body(msg)
                 
                 task_info = extract_task_info(email_body, subject)
                 
                 if not task_info['budget'] or task_info['budget'] < 500:
-                    print(f"⏭️  Пропуск (бюджет слишком мал или не указан)")
                     processed_emails.add(email_uid)
                     continue
                 
-                print(f"💰 Бюджет: {task_info['budget']} ₽")
                 
                 response_text = generate_response(task_info)
                 
