@@ -86,24 +86,18 @@ def parse_email_body(msg):
 
 def extract_task_info(email_body, subject):
     """Извлечение информации о задании из письма"""
+    
     title = subject
-    
     title = re.sub(r'до\s*\d+[\d\s]*₽', '', title).strip()
-    title = re.sub(r'до\s*\d+[\d\s]*\s*₽', '', title).strip()
-    
-    if len(title) < 10 or 'новое задание' in title.lower():
-        title_match = re.search(r'(Настроить бота|[А-Яа-яA-Za-z\s]+бот[а-я]*[^.]*)', email_body, re.IGNORECASE)
-        if title_match:
-            title = title_match.group(0).strip()
     
     description = ""
     lines = email_body.split('\n')
-    for i, line in enumerate(lines):
+    for line in lines:
         line = line.strip()
         if line and 'YouDo' not in line and 'Откликнуться' not in line and 'новое задание' not in line.lower():
-            if len(line) > 20:  
+            if len(line) > 20:
                 description += line + " "
-                if len(description) > 300:  
+                if len(description) > 500:
                     break
     
     budget_match = re.search(r'до\s*(\d[\d\s]*)\s*₽', subject)
@@ -114,74 +108,105 @@ def extract_task_info(email_body, subject):
     
     return {
         'title': title.strip(),
-        'description': description.strip()[:400],  
-        'budget': budget
+        'description': description.strip()[:500],
+        'budget': budget,
+        'full_text': email_body[:1000] 
     }
 
-def calculate_offer_price(client_budget):
-    """Расчёт предложенной цены (занижаем для конкурентности)"""
-    if not client_budget:
-        return None
+
+def should_mention_price_in_response(email_body, subject) -> bool:
+    """
+    Проверяет, просит ли заказчик оценку стоимости в отклике
+    Ищет ключевые фразы типа: "напиши стоимость", "указать цену", "с ценой"
+    """
+    price_keywords = [
+        'напиши стоимость',
+        'указать цену',
+        'с ценой',
+        'сколько стоит',
+        'укажи цену',
+        'цена в отклике',
+        'стоимость в отклике',
+        'напиши цену',
+    ]
     
-    discount_percent = 20
-    offer_price = int(client_budget * (1 - discount_percent / 100))
-    
-    if offer_price >= 1000:
-        offer_price = round(offer_price / 100) * 100
-    else:
-        offer_price = round(offer_price / 50) * 50
-    
-    return offer_price
+    full_text = (subject + ' ' + email_body).lower()
+    return any(keyword in full_text for keyword in price_keywords)
+
 
 def generate_response(task_info):
-    """Генерация отклика через GPT"""
-    offer_price = calculate_offer_price(task_info['budget'])
+    """Генерация персонального отклика через GPT"""
     
-    price_instruction = ""
-    if offer_price:
-        price_instruction = f"Укажи стоимость {offer_price} рублей."
+    should_price = should_mention_price_in_response(task_info['full_text'], task_info['title'])
     
-    prompt = f"""Напиши профессиональный отклик на заказ разработки Telegram-бота.
+    price_section = ""
+    if should_price and task_info['budget']:
+        budget = task_info['budget']
+        if budget < 1000:
+            offer_price = budget - (budget * 0.1)  
+        elif budget < 5000:
+            offer_price = budget - (budget * 0.15)  
+        else:
+            offer_price = budget - (budget * 0.2)  
+        
+        offer_price = int(offer_price)
+        if offer_price >= 1000:
+            offer_price = round(offer_price / 100) * 100
+        else:
+            offer_price = round(offer_price / 50) * 50
+        
+        price_section = f"Стоимость работы: {offer_price} ₽. "
+    
+    task_text = (task_info['title'] + ' ' + task_info['description']).lower()
+    
+    if 'python' in task_text or 'питон' in task_text:
+        python_advantage = "Python идеален для таких задач — быстрая разработка, чистый код и огромное количество готовых библиотек."
+    else:
+        python_advantage = "Возьму это на Python — язык, который позволяет реализовать проект быстро и качественно."
+    
+    prompt = f"""Напиши краткий, цепляющий отклик на заказ (не более 7 предложений, не маленьких).
 
-ЗАДАНИЕ:
-{task_info['title']}
-{task_info['description']}
-Бюджет клиента: {task_info['budget']} руб
+ЗАДАНИЕ: {task_info['title']}
+ОПИСАНИЕ: {task_info['description']}
 
-ТРЕБОВАНИЯ:
-1. Официальный деловой стиль, без эмоций
-2. Кратко: 2-3 предложения максимум
-3. {price_instruction}
-4. Контакт: @vsevolod_developer
-5. БЕЗ "Здравствуйте", "Спасибо", "Жду ответа" - только суть
-6. Если задание НЕ про Telegram-бота - напиши что специализируешься на ботах, но можешь помочь с этим проектом
+ТРЕБОВАНИЯ К ОТВЕТУ:
+1. Начни с "Здравствуйте"
+2. В двух предложениях объясни, почему Python отличный выбор для этого конкретно (не копируй готовые ответы):
+   "{python_advantage}"
+3. Кратко опиши, что ты сделаешь (максимум 2 предложения, конкретно к заданию)
+{f'4. Добавь цену: {price_section}, ТЫ ДОЛЖЕН САМ ОЦЕНИТЬ СЛОЖНОСТЬ И НАПИСАТЬ ЦЕНУ' if price_section else '4. НЕ указывай цену, просто скажи что готов обсудить'}
+5. Закончи фразой: "Мои проекты вы можете посмотреть на GitHub @avescodder, остальные детали можем обсудить в Telegram @vsevolod_developer - я в сети 24/7"
+6. Стиль: как живой человек, без шаблонов, без лишних фраз типа "Готов помочь", "Имею опыт"
+7. БЕЗ markdown (**, #, списков) - просто текст
 
-ШАБЛОН (варьируй):
-"Готов реализовать проект. [1 предложение о релевантном опыте]. Стоимость: [цена] руб. Telegram: @vsevolod_developer"
+ПРИМЕР (ДЛЯ ПОНИМАНИЯ СТИЛЯ):
+Здравствуйте. Разработаю для вас бота с нужной логикой — Python позволяет быстро реализовать сложные сценарии и легко интегрировать с API. Сделаю удобный интерфейс и протестирую все сценарии. Смогу реализовать проект за 12000р. Мои проекты вы можете посмотреть на GitHub @avescodder, остальные детали можем обсудить в Telegram @vsevolod_developer - я в сети 24/7.
 
-Напиши ТОЛЬКО текст отклика."""
+НАПИШИ ТОЛЬКО ТЕКСТ ОТКЛИКА:"""
 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Ты пишешь краткие деловые отклики для фрилансера."},
+                {"role": "system", "content": "Ты опытный разработчик, который пишет короткие, честные и цепляющие отклики. Без шаблонов и штампов. Язык - русский."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
-            max_tokens=200,
-            timeout=30  
+            temperature=0.8,  
+            max_tokens=300
         )
         
         generated_text = response.choices[0].message.content.strip()
         generated_text = generated_text.strip('"').strip("'")
-        return generated_text, offer_price
+        
+        generated_text = re.sub(r'^\d+\.\s+', '', generated_text)  
+        
+        return generated_text
         
     except Exception as e:
         print(f"❌ Ошибка GPT: {e}")
-        return None, None
+        return None
 
-async def send_to_telegram(task_info, response_text, offer_price):
+async def send_to_telegram(task_info, response_text):
     """Отправка в Telegram"""
     try:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -190,10 +215,7 @@ async def send_to_telegram(task_info, response_text, offer_price):
         message += f"📋 {task_info['title']}\n\n"
         
         if task_info['budget']:
-            message += f"💰 Бюджет клиента: {task_info['budget']:,} ₽\n".replace(',', ' ')
-        
-        if offer_price:
-            message += f"💵 Твоя цена: {offer_price:,} ₽\n\n".replace(',', ' ')
+            message += f"💰 Бюджет: {task_info['budget']:,} ₽\n\n".replace(',', ' ')
         else:
             message += "\n"
         
